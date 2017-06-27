@@ -29,8 +29,8 @@
 //    "FaceRecognizer.Eigenfaces":  Eigenfaces, also referred to as PCA (Turk and Pentland, 1991).
 //    "FaceRecognizer.Fisherfaces": Fisherfaces, also referred to as LDA (Belhumeur et al, 1997).
 //    "FaceRecognizer.LBPH":        Local Binary Pattern Histograms (Ahonen et al, 2006).
-const char *facerecAlgorithm = "FaceRecognizer.Fisherfaces";
-//const char *facerecAlgorithm = "FaceRecognizer.Eigenfaces";
+// const char *facerecAlgorithm = "FaceRecognizer.Fisherfaces";
+const char *facerecAlgorithm = "FaceRecognizer.Eigenfaces";
 
 
 // Sets how confident the Face Verification algorithm should be to decide if it is an unknown person or a known person.
@@ -96,6 +96,13 @@ using namespace std;
 #if !defined VK_ESCAPE
     #define VK_ESCAPE 0x1B      // Escape character (27)
 #endif
+
+/*
+TODO: get timestamp for training session name ? (initially no, later yes, perhaps allow loading/merging multiple sessions)
+TODO: check if directory exists, if not, create one for the session (either OpenCV or raw c++)
+TODO: on save, loop through samples and labels and save to disk (pgm/png for images) and .csv/.yml for labels
+TODO: load (grayscale) images and labels
+*/
 
 
 // Running mode for the Webcam-based interactive GUI program.
@@ -406,6 +413,11 @@ void recognizeAndTrainUsingWebcam(VideoCapture &videoCapture, CascadeClassifier 
                     // Show the number of collected faces. But since we also store mirrored faces, just show how many the user thinks they stored.
                     cout << "Saved face " << (preprocessedFaces.size()/2) << " for person " << m_selectedPerson << endl;
 
+                    cout << "Saved faces total " << preprocessedFaces.size() << " with " << faceLabels.size() << " labels" << endl;
+                    for(int i = 0 ; i < faceLabels.size() ; i++){
+                        cout << "faceLabels[" << i << "]: " << faceLabels[i] << endl;
+                    }
+
                     // Make a white flash on the face, so the user knows a photo has been taken.
                     Mat displayedFaceRegion = displayedFrame(faceRect);
                     displayedFaceRegion += CV_RGB(90,90,90);
@@ -621,6 +633,98 @@ void recognizeAndTrainUsingWebcam(VideoCapture &videoCapture, CascadeClassifier 
         if (keypress == VK_ESCAPE) {   // Escape Key
             // Quit the program!
             break;
+        }
+        if (keypress == 's'){
+            //save model
+            cout << "saving model to disk" << endl;
+            model->save("faceRecModel.yml");
+
+            //save face labels
+            FileStorage fs("faceLabels.yml", FileStorage::WRITE);
+            fs << "faceLabels" << faceLabels;
+            fs.release();
+            //save processed face samples
+            for(int i = 0 ; i < preprocessedFaces.size(); i++){
+                stringstream ss;
+                ss << "faces/preprocessedFace_" << i << ".png";
+                imwrite(ss.str(),preprocessedFaces[i]);
+            }
+        }
+        if (keypress == 'l'){
+            //load labels
+            cout << "loading faceLabels.yml" << endl;
+            int lastID = -1;
+            try{
+                FileStorage fs("faceLabels.yml", FileStorage::READ);
+                cout << "faceLabels loaded" << endl;
+                fs["faceLabels"] >> faceLabels;
+                
+                for(int i = 0 ; i < faceLabels.size(); i++){
+
+                    cout << "faceLabels[" << i << "] = " << faceLabels[i] << endl;
+                
+                    if(faceLabels[i] != lastID){
+
+
+                        if ((m_numPersons == 0) || (m_latestFaces[m_numPersons-1] >= 0)) {
+                            // Add a new person.
+                            m_numPersons++;
+                            m_latestFaces.push_back(-1); // Allocate space for an extra person.
+                            cout << "Num Persons: " << m_numPersons << endl;
+                        }
+                        // Use the newly added person. Also use the newest person even if that person was empty.
+                        m_selectedPerson = m_numPersons - 1;
+
+                        lastID = faceLabels[i];
+                    }
+                }
+
+            }catch(cv::Exception &e){
+                cout << &e << endl;
+            }
+
+            //load preprocessed faces
+            //Mat img = imread("faces/preprocessedFace_0.png",)
+            vector<String> filenames;
+            String folder = "faces/preprocessedFace_*.png";
+            glob(folder, filenames); // new function that does the job ;-)
+
+            for(size_t i = 0; i < filenames.size(); ++i)
+            {
+                Mat src = imread(filenames[i],CV_LOAD_IMAGE_UNCHANGED);//CV_LOAD_IMAGE_GRAYSCALE
+                cout << "reading " << filenames[i] << endl;
+                if(!src.data)
+                    cerr << "Problem loading image!!!" << endl;
+                else
+                    preprocessedFaces.push_back(src);
+            }
+
+            // m_mode = MODE_COLLECT_FACES;
+            m_mode = MODE_TRAINING;
+            // m_mode = MODE_DETECTION;
+
+            cout << "loading faceRecModel.yml" << endl;
+            string facerecAlgorithm = "FaceRecognizer.Fisherfaces";
+            model = Algorithm::create<FaceRecognizer>(facerecAlgorithm);
+            Mat labels;
+            try {
+                
+                model->load("faceRecModel.yml");
+                labels = model->get<Mat>("labels");
+
+                cout << "loaded faceRecModel.yml -> " << labels.rows << "labels read" << endl;
+
+            } catch (cv::Exception &e) {
+
+                cout << &e << endl;
+                
+                if (labels.rows <= 0) {
+                    cerr << "ERROR: Couldn't load trained data from [faceRecModel.yml]!" << endl;
+                    exit(1);
+                }
+            }
+
+
         }
 
     }//end while
